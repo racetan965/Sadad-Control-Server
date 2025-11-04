@@ -7,7 +7,7 @@ from collections import deque
 
 app = FastAPI(title="Sadad Control Server")
 
-API_KEY = "CHANGE_ME"  # غيّرها وحافظ عليها سرّية
+API_KEY = "bigboss999"  # غيّرها وحافظ عليها سرّية
 jobs = deque()         # صف طلبات بسيط بالذاكرة
 running = False
 current_job = None

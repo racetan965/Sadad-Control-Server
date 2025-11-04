@@ -31,20 +31,17 @@ def require_api_key(x_api_key: Optional[str]):
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
+JOB_QUEUE = []
+
 @app.post("/run")
-def run_job(payload: RunPayload, x_api_key: Optional[str] = Header(None)):
-    require_api_key(x_api_key)
-    job_id = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
-    job = Job(
-        id=job_id,
-        site=payload.site,
-        amount=payload.amount,
-        count=payload.count,
-        created_at=datetime.utcnow().isoformat()+"Z",
-        status="queued"
-    )
-    jobs.append(job.dict())
-    return {"status":"queued","job_id":job_id}
+async def run_job(request: Request):
+    global JOB_QUEUE  # 👈 ضروري جدًا حتى يعدّل القائمة العامة
+    data = await request.json()
+    job_id = str(int(time.time()))
+    data["job_id"] = job_id
+    JOB_QUEUE.append(data)
+    print(f"🆕 New job queued: {data}")
+    return {"status": "queued", "job_id": job_id}
 
 @app.get("/status")
 def status():
@@ -55,22 +52,18 @@ def status():
     }
 
 @app.get("/jobs/next")
-def jobs_next(x_api_key: Optional[str] = Header(None)):
-    # يُستدعى من الــ Agent على ويندوز ليأخذ أول مهمة
-    require_api_key(x_api_key)
-    global running, current_job
-    if running or not jobs:
-        return {"job": None}
-    job = jobs.popleft()
-    job["status"] = "running"
-    running = True
-    current_job = job
-    return {"job": job}
+async def get_next_job(request: Request):
+    key = request.headers.get("X-API-Key")
+    if key != "RacetanSecret123":
+        return {"error": "unauthorized"}
 
-class UpdatePayload(BaseModel):
-    status: str   # running|done|error
-    message: Optional[str] = None
-    log: Optional[str] = None
+    global JOB_QUEUE
+    if not JOB_QUEUE:
+        return {"job": None}
+
+    job = JOB_QUEUE.pop(0)
+    print(f"📤 Dispatching job: {job}")
+    return {"job": job}
 
 @app.post("/jobs/{job_id}/update")
 def jobs_update(job_id: str, payload: UpdatePayload, x_api_key: Optional[str] = Header(None)):

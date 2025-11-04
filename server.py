@@ -7,7 +7,7 @@ import time
 
 app = FastAPI(title="Sadad Control Server — Racetan")
 
-API_KEY = "RacetanSecret123"
+API_KEY = "bigboss999"
 JOBS: List[Dict] = []
 AGENTS: Dict[str, Dict] = {}
 GLOBAL_PAUSE = False  # ⏸️ حالة التوقف العام

@@ -6,7 +6,7 @@ import uvicorn
 
 app = FastAPI()
 
-API_KEY = "RacetanSecret123"
+API_KEY = "bigboss999"
 
 agents: List[Dict] = []
 jobs: List[Dict] = []

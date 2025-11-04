@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from fastapi import FastAPI, Request, Header
+from fastapi import FastAPI, Header
 from pydantic import BaseModel
 from typing import Optional, List, Dict
 from datetime import datetime
@@ -7,16 +7,12 @@ import time
 
 app = FastAPI(title="Sadad Control Server — Racetan")
 
-# ==============================
-# GLOBAL STATE
-# ==============================
 API_KEY = "RacetanSecret123"
 JOBS: List[Dict] = []
-AGENTS: Dict[str, Dict] = {}  # {agent_id: {last_seen, status, job_id}}
+AGENTS: Dict[str, Dict] = {}
+GLOBAL_PAUSE = False  # ⏸️ حالة التوقف العام
 
-# ==============================
-# PAYLOAD MODELS
-# ==============================
+# ===================== MODELS =====================
 class RunPayload(BaseModel):
     site: str
     amount: int
@@ -29,16 +25,11 @@ class UpdatePayload(BaseModel):
 class HeartbeatPayload(BaseModel):
     agent_id: str
 
-# ==============================
-# SECURITY
-# ==============================
 def require_api_key(x_api_key: Optional[str]):
     if x_api_key != API_KEY:
         raise Exception("Unauthorized")
 
-# ==============================
-# JOB CREATION (FROM PHONE / DASHBOARD)
-# ==============================
+# ===================== JOB CREATION =====================
 @app.post("/run")
 def run_job(payload: RunPayload, x_api_key: Optional[str] = Header(None)):
     require_api_key(x_api_key)
@@ -52,86 +43,85 @@ def run_job(payload: RunPayload, x_api_key: Optional[str] = Header(None)):
         "status": "queued",
     }
     JOBS.append(job)
-    print(f"🆕 New job queued: {job}")
+    print(f"🆕 Queued: {job}")
     return {"status": "queued", "job_id": job_id}
 
-# ==============================
-# AGENTS REQUEST JOBS
-# ==============================
+# ===================== JOB FETCH =====================
 @app.get("/jobs/next")
 def get_next_job(x_api_key: Optional[str] = Header(None)):
     require_api_key(x_api_key)
+    if GLOBAL_PAUSE:
+        return {"job": None, "paused": True}
+
     global JOBS
     if not JOBS:
         return {"job": None}
+
     job = JOBS.pop(0)
     print(f"📤 Dispatching job: {job}")
     return {"job": job}
 
-# ==============================
-# JOB STATUS UPDATE (from Agent)
-# ==============================
+# ===================== JOB STATUS UPDATE =====================
 @app.put("/jobs/{job_id}")
 def jobs_update(job_id: str, payload: UpdatePayload, x_api_key: Optional[str] = Header(None)):
     require_api_key(x_api_key)
-    print(f"📝 Job {job_id} updated: {payload.dict()}")
-    for j in JOBS:
-        if j["id"] == job_id:
-            j["status"] = payload.status or j.get("status", "unknown")
-            j["result"] = payload.result or ""
+    for agent_id, info in AGENTS.items():
+        log_entry = f"{datetime.utcnow().isoformat()} → {payload.status or ''}: {payload.result or ''}"
+        info.setdefault("logs", []).append(log_entry)
+
+        if payload.status == "running":
+            info["status"] = "busy"
+            info["job"] = job_id
+        elif payload.status == "done":
+            info["status"] = "idle"
+            info["job"] = None
+        elif payload.status == "failed":
+            info["status"] = "error"
+        print(f"📝 {agent_id} → {log_entry}")
     return {"ok": True}
 
-# ==============================
-# AGENT HEARTBEAT
-# ==============================
+# ===================== HEARTBEAT =====================
 @app.post("/heartbeat")
 def heartbeat(payload: HeartbeatPayload, x_api_key: Optional[str] = Header(None)):
     require_api_key(x_api_key)
-    AGENTS[payload.agent_id] = {
-        "last_seen": time.time(),
-        "status": "alive"
-    }
-    return {"ok": True}
+    agent_id = payload.agent_id
+    if agent_id not in AGENTS:
+        AGENTS[agent_id] = {"status": "idle", "job": None, "logs": [], "last_seen": time.time()}
+    else:
+        AGENTS[agent_id]["last_seen"] = time.time()
+        if AGENTS[agent_id].get("job") is None:
+            AGENTS[agent_id]["status"] = "idle"
+    return {"ok": True, "paused": GLOBAL_PAUSE}
 
-# ==============================
-# SERVER STATUS
-# ==============================
-@app.get("/status")
-def status():
-    running = any(a.get("status") == "alive" for a in AGENTS.values())
-    return {
-        "running": running,
-        "queue_size": len(JOBS),
-        "current_job": JOBS[0] if JOBS else None,
-        "agents": list(AGENTS.keys())
-    }
-
-# ==============================
-# SIMPLE DASHBOARD (HTML)
-# ==============================
-@app.get("/dashboard")
-def dashboard():
-    html = """
-    <html><head><meta charset='utf-8'><title>Sadad Control Dashboard</title>
-    <style>
-    body {font-family:Arial, sans-serif; background:#111; color:#eee; padding:20px;}
-    table {width:100%; border-collapse:collapse; margin-top:20px;}
-    th, td {border:1px solid #333; padding:8px; text-align:center;}
-    th {background:#222;}
-    tr:nth-child(even){background:#1b1b1b;}
-    .ok {color:lime;}
-    .dead {color:red;}
-    </style></head><body>
-    <h2>🖥️ Sadad Control Dashboard</h2>
-    <h3>Queued Jobs: """ + str(len(JOBS)) + """</h3>
-    <table><tr><th>Agent ID</th><th>Status</th><th>Last Seen</th></tr>
-    """
-
+# ===================== AGENT STATUS =====================
+@app.get("/agents")
+def get_agents():
     now = time.time()
+    data = []
     for agent_id, info in AGENTS.items():
         alive = (now - info["last_seen"]) < 30
-        color_class = "ok" if alive else "dead"
-        html += f"<tr><td>{agent_id}</td><td class='{color_class}'>{'🟢 Alive' if alive else '🔴 Offline'}</td><td>{datetime.fromtimestamp(info['last_seen']).strftime('%H:%M:%S')}</td></tr>"
+        data.append({
+            "agent_id": agent_id,
+            "status": ("offline" if not alive else info.get("status", "idle")),
+            "job": info.get("job"),
+            "logs": info.get("logs", []),
+            "last_seen": datetime.fromtimestamp(info["last_seen"]).isoformat(),
+        })
+    return {"agents": data, "paused": GLOBAL_PAUSE}
 
-    html += "</table></body></html>"
-    return html
+# ===================== GLOBAL CONTROL =====================
+@app.post("/control/{action}")
+def control_all(action: str, x_api_key: Optional[str] = Header(None)):
+    global GLOBAL_PAUSE
+    require_api_key(x_api_key)
+
+    if action.lower() == "pause":
+        GLOBAL_PAUSE = True
+        print("⏸️ All agents paused.")
+        return {"paused": True}
+    elif action.lower() == "resume":
+        GLOBAL_PAUSE = False
+        print("▶️ All agents resumed.")
+        return {"paused": False}
+    else:
+        return {"error": "invalid_action"}

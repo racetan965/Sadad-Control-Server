@@ -186,20 +186,6 @@ def get_logs(limit: int = 50):
 def home():
     return {"status": "ok", "agents": len(agents_state), "jobs_in_queue": len(jobs)}
 
-@app.get("/agents")
-def get_agents():
-    """إرجاع قائمة الأجهزة المسجّلة"""
-    result = []
-    for agent_id, info in AGENTS.items():
-        result.append({
-            "agent_id": agent_id,
-            "status": info.get("status", "unknown"),
-            "job": info.get("job"),
-            "logs": info.get("logs", []),
-            "last_seen": info.get("last_seen")
-        })
-    return {"agents": result, "paused": PAUSED}
-
 # ============================================================
 # 🔸 Run locally
 # ============================================================

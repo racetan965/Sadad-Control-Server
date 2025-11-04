@@ -125,3 +125,12 @@ def control_all(action: str, x_api_key: Optional[str] = Header(None)):
         return {"paused": False}
     else:
         return {"error": "invalid_action"}
+
+@app.get("/status")
+def status(x_api_key: Optional[str] = Header(None)):
+    require_api_key(x_api_key)
+    return {
+        "running": any(a["status"] == "busy" for a in agents),
+        "queue_size": len(jobs),
+        "current_job": next((a["job"] for a in agents if a["status"] == "busy"), None)
+    }

@@ -18,6 +18,10 @@ class RunPayload(BaseModel):
     amount: int            # 5/10/15/20/30
     count: int
 
+class UpdatePayload(BaseModel):
+    status: Optional[str] = None
+    result: Optional[str] = None
+
 class Job(BaseModel):
     id: str
     site: str

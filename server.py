@@ -10,6 +10,15 @@ from collections import deque
 
 app = FastAPI(title="Sadad Control Server")
 
+# 💡 2. أضف هذا الجزء للسماح بالطلبات من المتصفح
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # يسمح لأي موقع (مثل localhost) بالاتصال
+    allow_credentials=True,
+    allow_methods=["*"],  # يسمح بكل الأوامر (GET, POST)
+    allow_headers=["*"],  # يسمح بكل الهيدرز (مثل X-API-Key)
+)
+
 # 🔐 Global config
 API_KEY = "bigboss999"  # same key for Flutter app + agent
 jobs = deque()           # job queue

@@ -1,5 +1,5 @@
 # ============================================================
-# ✅ Sadad Control Server — Unified version (for Flutter + Agent)
+# ✅ Sadad Control Server — (MODIFIED VERSION)
 # ============================================================
 
 from fastapi import FastAPI, HTTPException, Header
@@ -13,8 +13,7 @@ app = FastAPI(title="Sadad Control Server")
 # 🔐 Global config
 API_KEY = "bigboss999"  # same key for Flutter app + agent
 jobs = deque()           # job queue
-running = False
-current_job = None
+running_jobs: Dict[str, Dict] = {} # <-- MODIFIED: Track all running jobs by job_id
 logs_store = []
 agents_state: Dict[str, Dict[str, Any]] = {}  # agent_id -> status info
 
@@ -78,14 +77,13 @@ def run_job(payload: RunPayload, x_api_key: Optional[str] = Header(None)):
 @app.get("/jobs/next")
 def jobs_next(x_api_key: Optional[str] = Header(None)):
     require_api_key(x_api_key)
-    global running, current_job
-    if running or not jobs:
+    # MODIFIED: Removed global 'running' flag. Just give a job if one exists.
+    if not jobs:
         return {"job": None}
     job = jobs.popleft()
     job["status"] = "running"
-    running = True
-    current_job = job
-    print(f"🚀 Sending job to agent: {job['site']} / {job['amount']} / {job['count']}")
+    running_jobs[job["id"]] = job # <-- MODIFIED: Track this job as running
+    print(f"🚀 Sending job {job['id']} to agent: {job['site']}")
     return {"job": job}
 
 
@@ -95,17 +93,24 @@ def jobs_next(x_api_key: Optional[str] = Header(None)):
 @app.post("/jobs/{job_id}/update")
 def jobs_update(job_id: str, payload: UpdatePayload, x_api_key: Optional[str] = Header(None)):
     require_api_key(x_api_key)
-    global running, current_job
-    if current_job and current_job["id"] == job_id:
-        current_job["status"] = payload.status
+    # MODIFIED: Update the job in the 'running_jobs' dictionary
+    if job_id in running_jobs:
+        job = running_jobs[job_id]
+        job["status"] = payload.status
         if payload.message:
-            current_job["message"] = payload.message
+            job["message"] = payload.message
         if payload.log:
             logs_store.append(payload.log[-2000:])
+        
+        # If job is finished, remove it from the running list
         if payload.status in ("done", "error"):
-            running = False
-    print(f"📋 Job {job_id} updated → {payload.status}")
-    return {"ok": True}
+            running_jobs.pop(job_id, None) 
+            
+        print(f"📋 Job {job_id} updated → {payload.status}")
+        return {"ok": True}
+    else:
+        print(f"⚠️ Received update for unknown/finished job: {job_id}")
+        return {"ok": False, "detail": "Job not found or already finished"}
 
 
 # ============================================================
@@ -114,9 +119,17 @@ def jobs_update(job_id: str, payload: UpdatePayload, x_api_key: Optional[str] = 
 @app.post("/update/{agent_id}")
 def update_agent(agent_id: str, payload: Dict[str, Any] = None, x_api_key: Optional[str] = Header(None)):
     require_api_key(x_api_key)
+    payload_data = payload or {}
     agents_state.setdefault(agent_id, {"status": "idle", "logs": []})
-    agents_state[agent_id]["status"] = (payload or {}).get("status", "idle")
+    agents_state[agent_id]["status"] = payload_data.get("status", "idle")
     agents_state[agent_id]["last_seen"] = datetime.utcnow().isoformat()
+    
+    # MODIFIED: Store what job the agent is busy with
+    if "job" in payload_data:
+        agents_state[agent_id]["job"] = payload_data.get("job")
+    elif payload_data.get("status", "idle") == "idle":
+        agents_state[agent_id]["job"] = None # Clear job if agent is idle
+
     return {"ok": True}
 
 
@@ -127,7 +140,8 @@ def register_agent(payload: Dict[str, Any], x_api_key: Optional[str] = Header(No
     agents_state[agent_id] = {
         "status": payload.get("status", "idle"),
         "last_seen": datetime.utcnow().isoformat(),
-        "logs": []
+        "logs": [],
+        "job": None # <-- MODIFIED: Add job field on register
     }
     print(f"🖥️ Registered agent: {agent_id}")
     return {"ok": True}
@@ -144,22 +158,14 @@ def list_agents(x_api_key: Optional[str] = Header(None)):
             {
                 "agent_id": k,
                 "status": v.get("status", "idle"),
-                "job": v.get("job"),
+                "job": v.get("job"), # This will now be populated
                 "logs": v.get("logs", []),
                 "last_seen": v.get("last_seen")
             }
             for k, v in agents_state.items()
         ],
-        "paused": False
+        "paused": False # Note: 'paused' logic is not implemented in server
     }
-
-
-@app.post("/control/{action}")
-def control_all(action: str, x_api_key: Optional[str] = Header(None)):
-    require_api_key(x_api_key)
-    print(f"⚙️ Control action: {action}")
-    # optional: pause/resume logic
-    return {"ok": True}
 
 
 # ============================================================
@@ -167,10 +173,11 @@ def control_all(action: str, x_api_key: Optional[str] = Header(None)):
 # ============================================================
 @app.get("/status")
 def status():
+    # MODIFIED: Report on the new 'running_jobs' dict
     return {
-        "running": running,
+        "running_jobs_count": len(running_jobs),
         "queue_size": len(jobs),
-        "current_job": current_job
+        "running_jobs_list": list(running_jobs.values())
     }
 
 

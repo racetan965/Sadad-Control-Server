@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from datetime import datetime
 from collections import deque
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Sadad Control Server")
 
